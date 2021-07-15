@@ -1,0 +1,5 @@
+{
+"parameters": {
+    "DBInstanceClass": "db.t3.micro"
+    }
+}

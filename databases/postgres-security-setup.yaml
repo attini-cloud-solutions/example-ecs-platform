@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::SecretsManager-2020-07-23
+
+Description: >
+  Postgres security setup
+
+
+Parameters:
+
+  AttiniEnvironmentName:
+    Type: String
+    Description: The name of the environment the stack created belongs to
+    Default: stage
+
+  KmsKeyArn:
+    Type: String
+    Description: Should the DB use a specific KMS key? If not leave empty. more into https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-rds-database-instance.html#cfn-rds-dbinstance-kmskeyid
+    Default: ""
+
+  DatabaseName:
+    Type: String
+    Description: Name for the db secret
+    Default: "postgres"
+
+
+Conditions:
+  UseCustomKms:
+    !Not [ !Equals [ !Ref KmsKeyArn, "" ] ]
+
+
+Resources:
+  PostgreAdminAccess:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: PostgreSQL Master
+      GenerateSecretString:
+        ExcludePunctuation: True
+        IncludeSpace: False
+        PasswordLength: 40
+        SecretStringTemplate: '{"username": "postgres"}'
+        GenerateStringKey: 'password'
+      KmsKeyId:
+        !If
+        - UseCustomKms
+        - !Ref KmsKeyArn
+        - !Ref AWS::NoValue
+      Name: !Sub /${AttiniEnvironmentName}/databases/master-password/${DatabaseName}
+
+
+  SecretRotationSchedule:
+    Type: AWS::SecretsManager::RotationSchedule
+    Properties:
+      HostedRotationLambda:
+        KmsKeyArn:
+          !If
+            - UseCustomKms
+            - !Ref KmsKeyArn
+            - !Ref AWS::NoValue
+        RotationType: PostgreSQLSingleUser
+      RotationRules:
+        AutomaticallyAfterDays: 14
+      SecretId: !Ref PostgreAdminAccess
+
+
+Outputs:
+
+  PostgreAdminAccess:
+    Description: PostgreAdminAccess
+    Value: !Sub /${AttiniEnvironmentName}/databases/master-password/${DatabaseName}

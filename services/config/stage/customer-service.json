@@ -1,0 +1,23 @@
+
+{
+    "extends": "/services/config/default/default-config.json",
+    "stackName": "${Environment}-customer-${StackNameSuffix}",
+
+    "parameters": {
+        "AppName": "customer-service",
+        "ContainerRepository": {
+          "fallback" : true,
+          "value": "public.ecr.aws/y8m4v8b7/attini-labs"
+        },
+        "ContainerTag": {
+          "fallback" : true,
+          "value": "test-webserver"
+        },
+        "ContainerCpu": "100",
+        "ContainerMemory": "256",
+        "DesiredCount": {
+          "fallback" : true,
+          "value": 1
+        }
+    }
+  }

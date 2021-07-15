@@ -1,0 +1,368 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  Public gateway ECS service
+
+Parameters:
+
+  AttiniEnvironmentName:
+    Type: String
+    Description: The name of the environment the stack created belongs to
+    Default: stage
+
+  AppName:
+    Type: String
+
+  ContainerRepository:
+    Type: String
+    Default: public.ecr.aws/y8m4v8b7/attini-labs
+
+  ContainerTag:
+    Type: String
+    Default: test-webserver
+
+  EnvyImage:
+    Type: String
+    Description: The envy image
+    Default: public.ecr.aws/appmesh/aws-appmesh-envoy:v1.16.1.1-prod
+
+
+  EcsCluster:
+    Type: String
+    Default: ecs-cluster
+
+  ContainerMemory:
+    Type: Number
+    Description: The allocated memory for the container
+    Default: 256
+    AllowedValues:
+      - 256
+      - 320
+      - 384
+      - 448
+      - 512
+      - 768
+      - 1024
+      - 1280
+      - 1536
+      - 1792
+      - 2048
+      - 2560
+      - 3072
+      - 4096
+      - 6144
+
+
+  ContainerCpu:
+    Type: Number
+    Description: The allocated Cpu for the container
+    Default: 100
+
+  # NetworkMode:
+  #   Type: String
+  #   Default: awsvpc
+  #   AllowedValues:
+  #     - awsvpc
+  #     - bridge
+
+  PrivateSecurityGroup:
+    Type: String
+    Description: Tasks security group
+
+  PublicSecurityGroup:
+    Type: String
+    Description: Tasks public security group
+
+  # HasAdditionalPort:
+  #   !Not [ !Equals [ !Ref AdditionalPort, "0" ] ]
+
+  CloudMapNamespaceId:
+    Type: String
+
+  CloudMapNamespaceName:
+    Type: String
+
+  MeshName:
+    Type: String
+    # Default: ecs-cluster-mesh
+
+  TaskExecutionRoleArn:
+    Type: String
+
+  EfsId:
+    Type: String
+    Description: Default filesystem Id
+
+  EfsAccessPoint:
+    Type: String
+    Description: Efs AccessPoint
+
+  CapacityProvider:
+    Type: String
+    Description: Ecs capacity provider
+    # Default: stage-ecs-cluster-capacity-provider
+
+
+  PublicApiServiceHttpTargetGroup:
+    Type: String
+    Description: Http target group
+# Conditions:
+
+  # UseCloudWatch: !Equals [ !Ref LogTarget, "cloudwatch" ]
+
+  # HasAdditionalPort:
+  #   !Not [ !Equals [ !Ref AdditionalPort, "0" ] ]
+
+  # IsAwsVpcNetwork:
+  #   !Equals [ !Ref NetworkMode, awsvpc ]
+
+Resources:
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    UpdateReplacePolicy: Retain
+    Properties:
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      TaskRoleArn:
+        Fn::ImportValue:
+          !Sub ${AttiniEnvironmentName}-${AppName}-service-security-setup:ecs-task-role
+      Family: !Sub ${AttiniEnvironmentName}-${AppName}
+      Tags:
+      - Key: Environment
+        Value: !Ref AttiniEnvironmentName
+      - Key: StackName
+        Value: !Ref AWS::StackName
+      NetworkMode: awsvpc
+      Volumes:
+        - Name: !Sub ${AppName}_volume
+          EFSVolumeConfiguration:
+            AuthorizationConfig:
+              AccessPointId: !Ref EfsAccessPoint
+              IAM: ENABLED
+            FilesystemId: !Ref EfsId
+            # RootDirectory: !Sub /mnt/apps-efs/${AppName}
+            TransitEncryption: ENABLED
+            # TransitEncryptionPort:
+            # TransitEncryptionPort: Integer
+        # -
+        #   Host:
+        #     SourcePath: !Sub /mnt/apps-efs/${AppName}
+      ProxyConfiguration:
+        ContainerName: !Sub ${AttiniEnvironmentName}-${AppName}-envy
+        Type: APPMESH
+        ProxyConfigurationProperties:
+        - Name: IgnoredUID
+          Value: 101
+        - Name: IgnoredGID
+          Value: 101
+        - Name: AppPorts
+          Value: 80
+        - Name: ProxyIngressPort
+          Value: 15000
+        - Name: ProxyEgressPort
+          Value: 15001
+        - Name: EgressIgnoredIPs
+          Value: 169.254.170.2,169.254.169.254
+        - Name: EgressIgnoredPorts
+          Value: 22,2049
+      ContainerDefinitions:
+      - Name: !Sub ${AttiniEnvironmentName}-${AppName}
+        Essential: true
+        Environment:
+          -
+            Name: ENVIRONMENT
+            Value: !Ref AttiniEnvironmentName
+          -
+            Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+          -
+            Name: APP_NAME
+            Value: !Ref AppName
+        Image: !Sub ${ContainerRepository}:${ContainerTag}
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: !Ref TaskDefinitionLogGroup
+            awslogs-region: !Ref AWS::Region
+        MemoryReservation: !Ref ContainerMemory
+        Cpu: !Ref ContainerCpu
+        PortMappings:
+        - ContainerPort: 80
+        MountPoints:
+          - ContainerPath: !Sub /mnt/default-efs
+            SourceVolume: !Sub ${AppName}_volume
+      - Name: !Sub ${AttiniEnvironmentName}-${AppName}-envy
+        Image: !Ref EnvyImage
+        Essential: false
+        Environment:
+          -
+            Name: APPMESH_RESOURCE_ARN
+            Value: !Sub  arn:aws:appmesh:${AWS::Region}:${AWS::AccountId}:mesh/${MeshName}/virtualNode/${AttiniEnvironmentName}-${AppName}-node
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: !Ref EnvyLogGroup
+            awslogs-region: !Ref AWS::Region
+        MemoryReservation: 20
+        Cpu: 10
+        User: 101:101
+
+  TaskDefinitionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "${AttiniEnvironmentName}/${AppName}"
+      RetentionInDays: 30
+
+  EnvyLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "${AttiniEnvironmentName}/${AppName}/envy"
+      RetentionInDays: 30
+
+  EcsService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Sub ${AttiniEnvironmentName}-${EcsCluster}
+      ServiceRegistries:
+      - ContainerName: !Sub ${AttiniEnvironmentName}-${AppName}
+        RegistryArn: !GetAtt ServiceDiscovery.Arn
+      TaskDefinition: !Ref TaskDefinition
+      EnableECSManagedTags: true
+      PlacementStrategies:
+        - Type: spread
+          Field: attribute:ecs.availability-zone
+        - Type: binpack
+          Field: memory
+      PlacementConstraints:
+        - Type: distinctInstance
+      PropagateTags: TASK_DEFINITION
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      DeploymentController:
+        Type: ECS
+      DesiredCount: 1
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          SecurityGroups:
+            - !Ref PrivateSecurityGroup
+            - !Ref PublicSecurityGroup
+          Subnets:
+            - Fn::ImportValue:
+                !Sub ${AttiniEnvironmentName}-vpc:private-subnet-az-a
+            - Fn::ImportValue:
+                !Sub ${AttiniEnvironmentName}-vpc:private-subnet-az-b
+      CapacityProviderStrategy:
+      - CapacityProvider:
+          !Ref CapacityProvider
+        Base: 1
+        Weight: 1
+      LoadBalancers:
+      - TargetGroupArn:
+          Ref: PublicApiServiceHttpTargetGroup
+        ContainerPort: 80
+        ContainerName: !Sub ${AttiniEnvironmentName}-${AppName}
+
+  ServiceDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: !Sub ${AppName}
+      Description: !Ref AWS::StackName
+      DnsConfig:
+        DnsRecords:
+        - Type: A
+          TTL: 30
+        NamespaceId: !Ref CloudMapNamespaceId
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 2
+      NamespaceId: !Ref CloudMapNamespaceId
+
+
+  VirtualNode:
+    Type: AWS::AppMesh::VirtualNode
+    Properties:
+      MeshName: !Sub ${MeshName}
+      VirtualNodeName: !Sub ${AttiniEnvironmentName}-${AppName}-node
+      Spec:
+        Listeners:
+          - ConnectionPool:
+              HTTP:
+                MaxConnections: 10
+                MaxPendingRequests: 10
+            HealthCheck:
+              HealthyThreshold: 2
+              IntervalMillis: 5000
+              Path: /
+              Port: 80
+              Protocol: http
+              TimeoutMillis: 30000
+              UnhealthyThreshold: 5
+            PortMapping:
+              Port: 80
+              Protocol: http
+        # Logging:
+        #   Logging
+        ServiceDiscovery:
+          AWSCloudMap:
+            NamespaceName: !Ref CloudMapNamespaceName
+            ServiceName: !GetAtt ServiceDiscovery.Name
+
+
+  VirtualRouter:
+    Type: AWS::AppMesh::VirtualRouter
+    Properties:
+      MeshName: !Sub ${MeshName}
+      VirtualRouterName: !Sub ${AttiniEnvironmentName}-${AppName}-router
+      Spec:
+        Listeners:
+        - PortMapping:
+            Port: 80
+            Protocol: http
+
+
+  Route:
+    Type: AWS::AppMesh::Route
+    Properties:
+      MeshName: !Sub ${MeshName}
+      Spec:
+        HttpRoute:
+          Action:
+            WeightedTargets:
+              - VirtualNode: !GetAtt VirtualNode.VirtualNodeName
+                Weight: 1
+          Match:
+            Prefix: /
+          RetryPolicy:
+            HttpRetryEvents:
+              - server-error
+              - gateway-error
+            MaxRetries: 5
+            PerRetryTimeout:
+              Unit: s
+              Value: 1
+      VirtualRouterName: !GetAtt VirtualRouter.VirtualRouterName
+
+  VirtualService:
+    Type: AWS::AppMesh::VirtualService
+    Properties:
+      MeshName: !Sub ${MeshName}
+      VirtualServiceName: !Sub ${AttiniEnvironmentName}-${AppName}-service
+      Spec:
+        Provider:
+          VirtualRouter:
+            VirtualRouterName: !GetAtt VirtualRouter.VirtualRouterName
+
+
+  VirtualGateway80:
+    Type: AWS::AppMesh::VirtualGateway
+    Properties:
+      MeshName: !Sub ${MeshName}
+      Spec:
+        Listeners:
+          - PortMapping:
+              Port: 80
+              Protocol: http
+      VirtualGatewayName: PublicHttp

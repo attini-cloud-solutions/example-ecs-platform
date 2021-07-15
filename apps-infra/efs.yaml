@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  EFS Filesystem and Mountpoints
+
+Parameters:
+
+  AttiniEnvironmentName:
+    Type: String
+    Description: The name of the environment the stack created belongs to
+
+  SecurityGroup:
+    Type: String
+    Description: Security group
+    Default: sg-0359a1a2c1ce28cdf
+
+  EfsLifeCyclePolicy:
+    Type: String
+    Description: How many days before an object should go to storage type STANDARD_IA, leave empty to disabe?
+    AllowedValues: ['AFTER_14_DAYS', 'AFTER_30_DAYS', 'AFTER_60_DAYS', 'AFTER_7_DAYS', 'AFTER_90_DAYS', 'NoLifeCyclePolicy']
+    Default: 'AFTER_30_DAYS'
+
+
+  ProdWorkload:
+    Type: String
+    Description: Should the EFS be configured for prod workloads of not
+    Default: False
+    AllowedValues:
+      - True
+      - False
+
+
+Conditions:
+  LifeCyclePolicyNotDefined:
+    !Equals [ !Ref EfsLifeCyclePolicy, NoLifeCyclePolicy ]
+
+  ProdWorkload:
+    !Equals [ !Ref ProdWorkload, True]
+
+Resources:
+
+  EfsFilesystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      BackupPolicy:
+        Status: ENABLED
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub ${AttiniEnvironmentName}-apps-efs
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+      LifecyclePolicies:
+        - !If
+          - LifeCyclePolicyNotDefined
+          - !Ref AWS::NoValue
+          - TransitionToIA: !Ref EfsLifeCyclePolicy
+
+  EfsMountTargetA:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFilesystem
+      SecurityGroups:
+        - !Ref SecurityGroup
+      SubnetId:
+        !ImportValue
+          Fn::Sub: ${AttiniEnvironmentName}-vpc:private-subnet-az-a
+
+  EfsMountTargetB:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFilesystem
+      SecurityGroups:
+        - !Ref SecurityGroup
+      SubnetId:
+        !ImportValue
+          Fn::Sub: ${AttiniEnvironmentName}-vpc:private-subnet-az-b
+
+
+Outputs:
+  EfsId:
+    Description: EFS Filesystem
+    Value: !Ref EfsFilesystem
+
+  # EfsMountTargetA:
+  #   Description: EFS Mountpoint A
+  #   Value: !Ref EfsMountTargetA
+
+  # EfsMountTargetB:
+  #   Condition
+  #   Description: EFS Mountpoint B
+  #   Value: !Ref EfsMountTargetB

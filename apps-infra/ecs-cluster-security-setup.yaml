@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Security Setup for A ECS clusters
+
+Parameters:
+
+  AttiniEnvironmentName:
+    Type: String
+    Description: The name of the environment the stack created belongs to.
+
+  EfsId:
+    Type: String
+    Description: Standard filesystem Id
+
+
+Resources:
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+              - ecs-tasks.amazonaws.com
+          Action:
+            - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: !Ref AWS::StackName
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                  - ssm:GetParametersByPath
+                  - ssm:GetParameters
+                  - ssm:GetParameter
+                Effect: Allow
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AttiniEnvironmentName}/*"
+              - Action:
+                  - ssm:DescribeParameters
+                Effect: Allow
+                Resource: '*'
+
+
+  EcsInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+              - ec2.amazonaws.com
+          Action:
+            - sts:AssumeRole
+      Policies:
+        - PolicyName: !Ref AWS::StackName
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                  - ssm:GetParametersByPath
+                  - ssm:GetParameters
+                  - ssm:GetParameter
+                Effect: Allow
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AttiniEnvironmentName}/*"
+              - Action:
+                  - ssm:DescribeParameters
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                - elasticfilesystem:ClientMount
+                - elasticfilesystem:ClientWrite
+                - elasticfilesystem:ClientRootAccess
+                Effect: Allow
+                Resource: !Sub arn:aws:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${EfsId}
+
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EcsInstanceRole
+
+Outputs:
+
+  EcsInstanceRole:
+    Value: !GetAtt EcsInstanceRole.Arn
+    Description: ECS instance role
+    Export:
+      Name: !Sub "${AWS::StackName}:ecs-instance-role-arn"
+
+  EcsInstanceProfile:
+    Value: !GetAtt InstanceProfile.Arn
+    Description: ECS instance profile arn
+    Export:
+      Name: !Sub "${AWS::StackName}:ecs-instance-profile-arn"
+
+  TaskExecutionRoleArn:
+    Value: !GetAtt TaskExecutionRole.Arn
+    Description: EC2 instance role
+    Export:
+      Name: !Sub "${AWS::StackName}:task-execution-role-arn"

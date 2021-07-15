@@ -1,0 +1,9 @@
+{
+    "parameters": {
+        "AmiId": "ami-027d55743533d8658",
+        "InstanceType": "m5.large",
+        "MaxSizeOfAsg": "3",
+        "MinSizeOfAsg": "1",
+        "StorageInGb": "20"
+    }
+}

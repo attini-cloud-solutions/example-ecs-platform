@@ -1,0 +1,179 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  Postgres security setup
+
+################################################################################
+Parameters:
+################################################################################
+
+  AttiniEnvironmentName:
+    Type: String
+    Description: The name of the environment the stack created belongs to
+    Default: stage
+
+  ProdWorkload:
+    Type: String
+    Description: Should the DB be configured for prod workloads of not
+    Default: False
+    AllowedValues:
+      - True
+      - False
+
+  StorageInGb:
+    Type: String
+    Description: Disk size in GB, have to be between 20 and 65536
+    Default: 20
+
+  DBInstanceClass:
+    Type: String
+    Description: Database size, more info at https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.DBInstanceClass.html
+    AllowedValues:
+      - db.m6g.large
+      - db.m6g.xlarge
+      - db.m6g.2xlarge
+      - db.m6g.4xlarge
+      - db.r6g.large
+      - db.r6g.xlarge
+      - db.r6g.2xlarge
+      - db.r6g.4xlarge
+      - db.t3.micro
+      - db.t3.small
+      - db.t3.medium
+      - db.t3.large
+      - db.t3.xlarge
+      - db.t3.2xlarge
+    Default: db.t3.micro
+
+  SecurityGroup:
+    Type: String
+    Description: Security group
+
+  DBSnapshotIdentifier:
+    Type: String
+    Description: If this is a restore, specify the Snapshot. NEVER Update this value unless you want to replace your current DB
+    Default: ""
+
+  PostgresVersion:
+    Type: String
+    Description: Database engine version
+    Default: 10.15
+
+  KmsKeyArn:
+    Type: String
+    Description: Should the DB use a specific KMS key? If not leave empty. more into https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-rds-database-instance.html#cfn-rds-dbinstance-kmskeyid
+    Default: ""
+
+  PostgresAdminAccess:
+    Description: Secrets Arn
+    Type: String
+    Default: "/stage/databases/master-password/postgres"
+
+Conditions:
+  ProdWorkload:
+    !Equals [ !Ref ProdWorkload, True]
+
+  IsRestore:
+    !Not [ !Equals [ !Ref DBSnapshotIdentifier, "" ] ]
+
+  UseCustomKms:
+    !Not [ !Equals [ !Ref KmsKeyArn, "" ] ]
+
+Resources:
+
+  PostgresRds:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage:
+        !If
+          - IsRestore
+          - !Ref AWS::NoValue
+          - !Ref StorageInGb
+      AllowMajorVersionUpgrade: True
+      AutoMinorVersionUpgrade: True
+      BackupRetentionPeriod:
+        !If
+          - ProdWorkload
+          - 30
+          - 7
+      CopyTagsToSnapshot: True
+      DBInstanceClass: !Ref DBInstanceClass
+      DBSnapshotIdentifier: !Ref DBSnapshotIdentifier
+      DeleteAutomatedBackups:
+        !If
+          - ProdWorkload
+          - False
+          - True
+      DeletionProtection:
+        !If
+          - ProdWorkload
+          - True
+          - False
+      EnableIAMDatabaseAuthentication: True
+      EnablePerformanceInsights:
+        !If
+          - ProdWorkload
+          - False
+          - True
+      Engine: postgres
+      EngineVersion: !Ref PostgresVersion
+      KmsKeyId:
+        !If
+          - UseCustomKms
+          - !Ref KmsKeyArn
+          - !Ref AWS::NoValue
+      MasterUsername: !Sub '{{resolve:secretsmanager:${PostgresAdminAccess}::username}}'
+      MasterUserPassword: !Sub '{{resolve:secretsmanager:${PostgresAdminAccess}::password}}'
+      MonitoringInterval:
+        !If
+          - ProdWorkload
+          - 60
+          - 0
+      MultiAZ:
+        !If
+          - ProdWorkload
+          - True
+          - False
+      MonitoringInterval:
+        !If
+          - ProdWorkload
+          - 60
+          - 0
+      PerformanceInsightsRetentionPeriod: 7
+      Port: 5432
+      PreferredMaintenanceWindow: sun:00:00-sun:00:30
+      PubliclyAccessible: False
+      StorageEncrypted: True
+      StorageType: gp2
+      UseDefaultProcessorFeatures: True
+      VPCSecurityGroups:
+        - !Ref SecurityGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub DBSubnetGroup managed by cfn stack ${AWS::StackName}
+      SubnetIds:
+        - !ImportValue
+            Fn::Sub: ${AttiniEnvironmentName}-vpc:private-subnet-az-a
+        - !ImportValue
+            Fn::Sub: ${AttiniEnvironmentName}-vpc:private-subnet-az-b
+
+
+  SecretRDSInstanceAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref PostgresAdminAccess
+      TargetId: !Ref PostgresRds
+      TargetType: AWS::RDS::DBInstance
+
+
+Outputs:
+
+  PostgresInstanceName:
+    Description: RDS instance Name
+    Value: !Ref PostgresRds
+
+  PostgresInstanceDomain:
+    Description: RDS instance Domain
+    Value: !GetAtt PostgresRds.Endpoint.Address

@@ -1,0 +1,386 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform:
+  - AttiniDeploymentPlan
+  - AWS::Serverless-2016-10-31
+
+Parameters:
+  AttiniEnvironmentName:
+    Type: String
+
+  AttiniDistributionName:
+    Type: String
+
+  AttiniDistributionId:
+    Type: String
+
+
+Resources:
+
+  PlatformDeployPlan:
+    Type: Attini::Deploy::DeploymentPlan
+    Properties:
+      DeploymentPlan:
+        StartAt: Step1
+        States:
+          Step1:
+            Type: Parallel
+            Branches:
+
+              - StartAt: Vpc
+                States:
+                  Vpc:
+                    Type: AttiniCfn
+                    Properties:
+                      StackName: !Sub ${AttiniEnvironmentName}-vpc
+                      Template: /network/vpc.yaml
+                      ConfigFile: !Sub /network/cfn-config/${AttiniEnvironmentName}-vpc.json
+                    Next: SecurityGroups
+
+                  SecurityGroups:
+                    Type: AttiniCfn
+                    Properties:
+                      StackName: !Sub ${AttiniEnvironmentName}-security-groups
+                      Template: /network/security-groups.yaml
+                    End: true
+
+              - StartAt: CfnStackRoles
+                States:
+                  CfnStackRoles:
+                    Type: AttiniCfn
+                    Properties:
+                      StackName: !Sub ${AttiniEnvironmentName}-cfn-stack-roles
+                      Template: /cfn-roles.yaml
+                    End: true
+
+            Next: MergeNetworkResources
+
+          MergeNetworkResources:
+            Type: AttiniMergeOutput
+            Next: InfraResources
+
+          InfraResources:
+            Type: Parallel
+            Next: MergeInfraResources
+            Branches:
+
+              - StartAt: PostgresSecuritySetup
+                States:
+                  PostgresSecuritySetup:
+                    Type: AttiniCfn
+                    Properties:
+                      StackName: !Sub ${AttiniEnvironmentName}-postgres-rds-security-setup-v1
+                      Template: /databases/postgres-security-setup.yaml
+                      Parameters:
+                        DatabaseName: postgres
+                    Next: Postgres
+                  Postgres:
+                    Type: AttiniCfn
+                    Properties:
+                      StackName: !Sub ${AttiniEnvironmentName}-postgres-rds-v1
+                      Template: /databases/postgres.yaml
+                      Parameters:
+                        DatabaseName: postgres
+                        SecurityGroup.$: !Sub $.cfnOutput.${AttiniEnvironmentName}-security-groups.PostgreSqlSecurityGroup
+                        PostgreAdminAccess.$: !Sub $.cfnOutput.${AttiniEnvironmentName}-postgres-rds-security-setup-v1.PostgreAdminAccess
+                    End: true
+
+              - StartAt: Efs
+                States:
+                  Efs:
+                    Type: AttiniCfn
+                    Properties:
+                      StackName: !Sub ${AttiniEnvironmentName}-apps-efs
+                      Template: /apps-infra/efs.yaml
+                      Parameters:
+                        SecurityGroup.$: !Sub $.cfnOutput.${AttiniEnvironmentName}-security-groups.EfsSecurityGroup
+                    Next: EcsClusterSecuritySetup
+
+                  EcsClusterSecuritySetup:
+                    Type: AttiniCfn
+                    Properties:
+                      StackName: !Sub ${AttiniEnvironmentName}-ecs-cluster-security-setup
+                      Template: /apps-infra/ecs-cluster-security-setup.yaml
+                      Parameters:
+                        EfsId.$: !Sub $.cfnOutput.${AttiniEnvironmentName}-apps-efs.EfsId
+                    Next: GetEcsAmi
+
+                  GetEcsAmi:
+                    Type: Task
+                    Next: EcsServices
+                    ResultPath: $
+                    OutputPath: $.Payload
+                    Resource: arn:aws:states:::lambda:invoke
+                    Parameters:
+                      FunctionName: !Ref GetConfigLambda
+                      Payload:
+                        Event.$: $
+                        EcsAmi: ""
+                        OutputKey: EcsAmi
+                    Next: EcsCluster
+
+                  EcsCluster:
+                    Type: AttiniCfn
+                    Properties:
+                      StackName: !Sub ${AttiniEnvironmentName}-ecs-cluster
+                      Template: /apps-infra/ecs-cluster.yaml
+                      Parameters:
+                        EfsId.$: !Sub $.cfnOutput.${AttiniEnvironmentName}-apps-efs.EfsId
+                        SecurityGroup.$: !Sub $.cfnOutput.${AttiniEnvironmentName}-security-groups.DefaultAppSecurityGroup
+                        AmiId.$: $.customData.EcsAmi
+                        PrivateDomain: attini.internal
+                      ConfigFile: !Sub /apps-infra/cfn-config/${AttiniEnvironmentName}-ecs-cluster.json
+                    End: true
+
+              - StartAt: Nlb
+                States:
+                  Nlb:
+                    Type: AttiniCfn
+                    Properties:
+                      StackName: !Sub ${AttiniEnvironmentName}-public-nlb
+                      Template: /apps-infra/public-nlb.yaml
+                    End: true
+
+          MergeInfraResources:
+            Type: AttiniMergeOutput
+            Next: GetRdsDbIdentifierConfig
+
+          GetRdsDbIdentifierConfig:
+            Type: Task
+            ResultPath: $
+            OutputPath: $.Payload
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName: !Ref GetConfigLambda
+              Payload:
+                Event.$: $
+                DbiResourceId.$: !Sub $.cfnOutput.${AttiniEnvironmentName}-postgres-rds-v1.PostgresInstanceName
+                OutputKey: DbiResourceId
+            Next: CreateEcsServices
+
+          CreateEcsServices:
+            Type: Parallel
+            End: true
+            Branches:
+
+              - StartAt: PublicGatewaySecuritySetup
+                States:
+                  PublicGatewaySecuritySetup:
+                    Type: AttiniCfn
+                    Properties:
+                      StackName: !Sub ${AttiniEnvironmentName}-public-gateway-service-security-setup
+                      Template: /services/ecs-service-security-setup.yaml
+                      Parameters:
+                        AppName: public-gateway
+                        EfsId.$: !Sub $.cfnOutput.${AttiniEnvironmentName}-apps-efs.EfsId
+                        DbiResourceId.$: !Sub $.customData.DbiResourceId
+                    Next: PublicGateway
+
+                  PublicGateway:
+                    Type: AttiniCfn
+                    Properties:
+                      StackName: !Sub ${AttiniEnvironmentName}-public-gateway-ecs-service
+                      Template: /services/public-ecs-service.yaml
+                      Parameters:
+                        AppName: public-gateway
+                        EfsAccessPoint.$:
+                          !Sub $.cfnOutput.${AttiniEnvironmentName}-public-gateway-service-security-setup.EfsAccessPoint
+                        EfsId.$:
+                          !Sub $.cfnOutput.${AttiniEnvironmentName}-apps-efs.EfsId
+                        TaskExecutionRoleArn.$:
+                          !Sub $.cfnOutput.${AttiniEnvironmentName}-ecs-cluster-security-setup.TaskExecutionRoleArn
+                        CloudMapNamespaceId.$:
+                          !Sub $.cfnOutput.${AttiniEnvironmentName}-ecs-cluster.CloudMapNamespaceId
+                        CapacityProvider.$:
+                          !Sub $.cfnOutput.${AttiniEnvironmentName}-ecs-cluster.CapacityProvider
+                        CloudMapNamespaceName.$:
+                          !Sub $.cfnOutput.${AttiniEnvironmentName}-ecs-cluster.CloudMapNamespaceName
+                        MeshName.$:
+                          !Sub $.cfnOutput.${AttiniEnvironmentName}-ecs-cluster.AppMesh
+                        PrivateSecurityGroup.$:
+                          !Sub $.cfnOutput.${AttiniEnvironmentName}-security-groups.DefaultAppSecurityGroup
+                        PublicSecurityGroup.$:
+                          !Sub $.cfnOutput.${AttiniEnvironmentName}-security-groups.PublicSecurityGroup
+                        PublicApiServiceHttpTargetGroup.$:
+                          !Sub $.cfnOutput.${AttiniEnvironmentName}-public-nlb.PublicApiServiceHttpTargetGroup
+                    End: true
+
+              - StartAt: GetServiceConfigFiles
+                States:
+                  GetServiceConfigFiles:
+                    Type: Task
+                    ResultPath: $
+                    OutputPath: $.Payload
+                    Resource: arn:aws:states:::lambda:invoke
+                    Parameters:
+                      FunctionName: !Ref GetConfigLambda
+                      Payload:
+                        Event.$: $
+                        FilesPath: !Sub /services/config/${AttiniEnvironmentName}/
+                        OutputKey: StandardEcsConfigFiles
+                    Next: StandardEcsServiceSecuritySetups
+
+                  StandardEcsServiceSecuritySetups:
+                    Type: AttiniMap
+                    ItemsPath: $.customData.StandardEcsConfigFiles
+                    MaxConcurrency: 0
+                    Iterator:
+                      StartAt: StandardEcsServiceSecuritySetup
+                      States:
+                        StandardEcsServiceSecuritySetup:
+                          Type: AttiniCfn
+                          Properties:
+                            Template: /services/ecs-service-security-setup.yaml
+                            Variables:
+                              Environment: !Ref AttiniEnvironmentName
+                              TemplatePath: /services/ecs-service-security-setup.yaml
+                              StackNameSuffix: !Sub service-security-setup
+                              EfsId.$: !Sub $.cfnOutput.${AttiniEnvironmentName}-apps-efs.EfsId
+                              DbiResourceId.$: $.customData.DbiResourceId
+                          End: true
+                    Next: MergeSecuritySetup
+
+                  MergeSecuritySetup:
+                    Type: AttiniMergeOutput
+                    Next: GetServiceConfigFilesForServices
+
+                  GetServiceConfigFilesForServices:
+                    Type: Task
+                    ResultPath: $
+                    OutputPath: $.Payload
+                    Resource: arn:aws:states:::lambda:invoke
+                    Parameters:
+                      FunctionName: !Ref GetConfigLambda
+                      Payload:
+                        Event.$: $
+                        FilesPath: !Sub /services/config/${AttiniEnvironmentName}/
+                        OutputKey: StandardEcsConfigFiles
+                    Next: StandardEcsServices
+
+                  StandardEcsServices:
+                    Type: AttiniMap
+                    ItemsPath: $.customData.StandardEcsConfigFiles
+                    MaxConcurrency: 0
+                    Iterator:
+                      StartAt: StandardEcsService
+                      States:
+                        StandardEcsService:
+                          Type: AttiniCfn
+                          Properties:
+                            Template: /services/ecs-service.yaml
+                            Variables:
+                              Environment: !Ref AttiniEnvironmentName
+                              StackNameSuffix: service
+                              EcsCluster.$:
+                                !Sub $.cfnOutput.${AttiniEnvironmentName}-ecs-cluster.EcsClusterName
+                              EfsId.$:
+                                !Sub $.cfnOutput.${AttiniEnvironmentName}-apps-efs.EfsId
+                              TaskExecutionRoleArn.$:
+                                !Sub $.cfnOutput.${AttiniEnvironmentName}-ecs-cluster-security-setup.TaskExecutionRoleArn
+                              CloudMapNamespaceId.$:
+                                !Sub $.cfnOutput.${AttiniEnvironmentName}-ecs-cluster.CloudMapNamespaceId
+                              CapacityProvider.$:
+                                !Sub $.cfnOutput.${AttiniEnvironmentName}-ecs-cluster.CapacityProvider
+                              CloudMapNamespaceName.$:
+                                !Sub $.cfnOutput.${AttiniEnvironmentName}-ecs-cluster.CloudMapNamespaceName
+                              MeshName.$:
+                                !Sub $.cfnOutput.${AttiniEnvironmentName}-ecs-cluster.AppMesh
+                              SecurityGroup.$:
+                                !Sub $.cfnOutput.${AttiniEnvironmentName}-security-groups.DefaultAppSecurityGroup
+                          End: true
+                    End: true
+
+
+
+
+  GetConfigLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: !Sub Gets config for ${AttiniDistributionName} deployment plan
+      InlineCode: !Sub |
+          import boto3
+          import os
+          import logging
+          import json
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          s3_client = boto3.client('s3')
+          rds_client = boto3.client('rds')
+          ssm_client = boto3.client('ssm')
+
+          def get_ecs_ami():
+            return json.loads(ssm_client.get_parameter(
+                Name="/aws/service/ecs/optimized-ami/amazon-linux-2/recommended"
+            )["Parameter"]["Value"])["image_id"]
+
+
+          def get_db_identifier(db_instance_id):
+            return rds_client.describe_db_instances(
+                DBInstanceIdentifier=db_instance_id
+            )["DBInstances"][0]["DbiResourceId"]
+
+          def get_files_names(distribution_path, files_path):
+            prefix = f"{distribution_path}{files_path}"
+
+            response = s3_client.list_objects_v2(
+                Bucket=os.environ["Bucket"],
+                MaxKeys=100,
+                Prefix=prefix
+            )
+
+            keys = []
+            for o in response["Contents"]:
+              for key, value in o.items():
+                  logger.info(value)
+                  if key == "Key":
+                      keys.append(value[len(distribution_path):])
+            return keys
+
+          def lambda_handler(event, context):
+            logger.info(f'Got event: {json.dumps(event)}')
+
+            if "DbiResourceId" in event:
+              event["Event"]["customData"][event["OutputKey"]] = get_db_identifier(event["DbiResourceId"])
+            elif "EcsAmi" in event:
+              event["Event"]["customData"][event["OutputKey"]] = get_ecs_ami()
+            elif "FilesPath" in event:
+              distribution_path = event["Event"]["deploymentOriginData"]["deploymentSource"]["deploymentSourcePrefix"]
+              event["Event"]["customData"][event["OutputKey"]] = get_files_names(distribution_path, event["FilesPath"])
+
+
+            return event["Event"]
+      Environment:
+        Variables:
+          Environment: !Ref AttiniEnvironmentName
+          Bucket: !Sub attini-artifact-store-${AWS::Region}-${AWS::AccountId}
+          DistributionPath: !Sub ${AttiniEnvironmentName}/${AttiniDistributionName}/${AttiniDistributionId}/distribution-origin
+      Handler: index.lambda_handler
+      MemorySize: 256
+      Runtime: python3.8
+      Timeout: 300
+      Policies:
+        Statement:
+          - Action:
+            - rds:DescribeDBInstances
+            Effect: Allow
+            Resource: "*"
+          - Action:
+            - ssm:GetParameter
+            Effect: Allow
+            Resource:
+              - arn:aws:ssm:*:*:parameter/aws/service/ecs/optimized-ami/amazon-linux-2/*
+          - Action:
+            - s3:List*
+            Effect: Allow
+            Resource:
+              - !Sub arn:aws:s3:::attini-artifact-store-${AWS::Region}-${AWS::AccountId}
+              - !Sub arn:aws:s3:::attini-artifact-store-${AWS::Region}-${AWS::AccountId}/*
+
+
+
+  GetConfigLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${GetConfigLambda}
+      RetentionInDays: 30

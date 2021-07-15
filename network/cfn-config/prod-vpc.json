@@ -1,0 +1,10 @@
+{
+"parameters": {
+    "HighAvailability": "true",
+    "VpcCidr": "10.0.0.0/19",
+    "PrivateSubnetACidr": "10.0.0.0/21",
+    "PrivateSubnetBCidr": "10.0.8.0/21",
+    "PublicSubnetACidr": "10.0.24.0/24",
+    "PublicSubnetBCidr": "10.0.25.0/24"
+    }
+}

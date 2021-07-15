@@ -1,0 +1,101 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  Security Groups
+
+Parameters:
+
+  AttiniEnvironmentName:
+    Type: String
+    Description: The name of the environment the stack created belongs to
+
+Resources:
+  PostgreSqlSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: postgresql db security group
+      VpcId:
+        Fn::ImportValue:
+          !Sub ${AttiniEnvironmentName}-vpc:id
+      SecurityGroupIngress:
+        - Description: Opening to apps
+          FromPort: 5432
+          IpProtocol: tcp
+          SourceSecurityGroupId: !GetAtt DefaultAppSecurityGroup.GroupId
+          ToPort: 5432
+
+  DefaultAppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: App security group
+      GroupName: !Sub ${AttiniEnvironmentName}-default-app
+      VpcId:
+        Fn::ImportValue:
+          !Sub ${AttiniEnvironmentName}-vpc:id
+
+  Opening80OnAppForSelf:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Opening for self
+      FromPort: 80
+      GroupId: !GetAtt DefaultAppSecurityGroup.GroupId
+      IpProtocol: tcp
+      SourceSecurityGroupId: !GetAtt DefaultAppSecurityGroup.GroupId
+      ToPort: 80
+
+  PublicSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public security group
+      VpcId:
+        Fn::ImportValue:
+          !Sub ${AttiniEnvironmentName}-vpc:id
+      SecurityGroupIngress:
+        - Description: Opening to https to the public
+          FromPort: 443
+          ToPort: 443
+          IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+        - Description: Opening to https to the public
+          FromPort: 80
+          ToPort: 80
+          IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+        - Description: Opening to https to the public
+          FromPort: 22
+          ToPort: 22
+          IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+
+
+  EfsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Default efs security group
+      VpcId:
+        Fn::ImportValue:
+          !Sub ${AttiniEnvironmentName}-vpc:id
+      SecurityGroupIngress:
+      - Description: Opening towards the default app
+        FromPort: 2049
+        ToPort: 2049
+        IpProtocol: tcp
+        SourceSecurityGroupId: !Ref DefaultAppSecurityGroup
+
+
+Outputs:
+
+  PostgreSqlSecurityGroup:
+    Description: PostgreSqlSecurityGroup
+    Value: !GetAtt PostgreSqlSecurityGroup.GroupId
+
+  PublicSecurityGroup:
+    Description: PublicSecurityGroup
+    Value: !GetAtt PublicSecurityGroup.GroupId
+
+  EfsSecurityGroup:
+    Description: EfsSecurityGroup
+    Value: !GetAtt EfsSecurityGroup.GroupId
+
+  DefaultAppSecurityGroup:
+    Description: DefaultAppSecurityGroup
+    Value: !GetAtt DefaultAppSecurityGroup.GroupId

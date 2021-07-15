@@ -1,0 +1,168 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  ECS Cluster
+
+Parameters:
+
+  AttiniEnvironmentName:
+    Type: String
+    Description: The name of the environment the stack created belongs to
+    Default: stage
+
+  AmiId:
+    Type: String
+    Description: Ami Id
+    # Default: ami-027d55743533d8658
+
+  StorageInGb:
+    Type: String
+    Description: Disk size in GB, have to be between 20 and 65536
+    Default: 20
+
+  InstanceType:
+    Type: String
+    AllowedValues:
+      - m5.large
+      - m5.xlarge
+      - m5.2xlarge
+      - t3.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+      - t3.xlarge
+      - t3.2xlarge
+    Default: t3.micro
+
+  SecurityGroup:
+    Type: String
+    Description: Security group
+
+  EfsId:
+    Type: String
+    Description: Standard filesystem Id
+
+
+  MinSizeOfAsg:
+    Type: String
+    Description: The minimum number of ec2 in the cluster
+    Default: 0
+
+  MaxSizeOfAsg:
+    Type: String
+    Description: The maximum number of ec2 in the cluster
+    Default: 3
+
+  PrivateDomain:
+    Type: String
+
+Resources:
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    DependsOn: CapacityProvider
+    Properties:
+      ClusterName: !Ref AWS::StackName
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      CapacityProviders:
+        - !Sub ${AWS::StackName}-capacity-provider
+
+  AppMesh:
+    Type: AWS::AppMesh::Mesh
+    Properties:
+      MeshName: !Sub ${AWS::StackName}-mesh
+      Spec:
+        EgressFilter:
+          Type: ALLOW_ALL
+
+
+  AppServerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        SecurityGroupIds:
+        - !Ref SecurityGroup
+        InstanceType: !Ref 'InstanceType'
+        IamInstanceProfile:
+          Arn:
+            Fn::ImportValue:
+              !Sub ${AttiniEnvironmentName}-ecs-cluster-security-setup:ecs-instance-profile-arn
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash -xe
+            cat <<'EOF' >> /etc/ecs/ecs.config
+            ECS_CLUSTER=${AWS::StackName}
+            ECS_RESERVED_MEMORY=256
+            ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=5m
+            ECS_CONTAINER_STOP_TIMEOUT=2m
+            EOF
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
+
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !ImportValue
+            Fn::Sub: ${AttiniEnvironmentName}-vpc:private-subnet-az-a
+        - !ImportValue
+            Fn::Sub: ${AttiniEnvironmentName}-vpc:private-subnet-az-b
+      LaunchTemplate:
+        LaunchTemplateId: !Ref AppServerLaunchTemplate
+        Version: !GetAtt AppServerLaunchTemplate.LatestVersionNumber
+      MinSize: !Ref MinSizeOfAsg
+      MaxSize: !Ref MaxSizeOfAsg
+      MetricsCollection:
+        - Granularity: 1Minute
+      Tags:
+        - Key: Environment
+          Value: !Ref AttiniEnvironmentName
+          PropagateAtLaunch: true
+        - Key: Name
+          Value: !Ref AWS::StackName
+          PropagateAtLaunch: true
+      NewInstancesProtectedFromScaleIn: true
+      TerminationPolicies:
+      - OldestInstance
+      - Default
+
+  CapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      Name: !Sub ${AWS::StackName}-capacity-provider
+      AutoScalingGroupProvider:
+        AutoScalingGroupArn: !Ref AutoScalingGroup
+        ManagedScaling:
+            MaximumScalingStepSize: 100
+            MinimumScalingStepSize: 1
+            Status: ENABLED
+            TargetCapacity: 100
+        ManagedTerminationProtection: ENABLED
+
+  CloudMapNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Description: !Sub Cloudmap for ${AttiniEnvironmentName}
+      Vpc:
+        Fn::ImportValue:
+          !Sub "${AttiniEnvironmentName}-vpc:id"
+      Name: !Sub sd.${AttiniEnvironmentName}.${PrivateDomain}
+
+
+Outputs:
+
+  EcsClusterName:
+    Value: !Ref EcsCluster
+
+  CloudMapNamespaceId:
+    Value: !Ref CloudMapNamespace
+
+  CloudMapNamespaceName:
+    Value: !Sub sd.${AttiniEnvironmentName}.${PrivateDomain}
+
+  AppMesh:
+    Value: !GetAtt AppMesh.MeshName
+
+  CapacityProvider:
+    Value: !Ref CapacityProvider
