@@ -20,7 +20,7 @@ Parameters:
     Type: String
     Default: test-webserver
 
-  EnvyImage:
+  EnvoyImage:
     Type: String
     Description: The envy image
     Default: public.ecr.aws/appmesh/aws-appmesh-envoy:v1.16.1.1-prod
@@ -191,7 +191,7 @@ Resources:
           - ContainerPath: !Sub /mnt/default-efs
             SourceVolume: !Sub ${AppName}_volume
       - Name: !Sub ${AttiniEnvironmentName}-${AppName}-envy
-        Image: !Ref EnvyImage
+        Image: !Ref EnvoyImage
         Essential: false
         Environment:
           -

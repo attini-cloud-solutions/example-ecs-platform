@@ -47,9 +47,9 @@ Parameters:
     Description: The allocated Cpu for the container
     Default: 100
 
-  EnvyImage:
+  EnvoyImage:
     Type: String
-    Description: The envy image
+    Description: The envoy image
 
   EcsCluster:
     Type: String
@@ -99,7 +99,7 @@ Metadata:
         - CloudMapNamespaceId
         - SecurityGroup
         - EcsCluster
-        - EnvyImage
+        - EnvoyImage
         - Environment
         - AppName
 
@@ -181,7 +181,7 @@ Resources:
 
         -
           Name: !Sub ${AttiniEnvironmentName}-${AppName}-envy
-          Image: !Ref EnvyImage
+          Image: !Ref EnvoyImage
           Essential: false
           Environment:
             -

@@ -9,7 +9,7 @@
         "TaskExecutionRoleArn": "${TaskExecutionRoleArn}",
         "EfsAccessPoint": "${EfsAccessPoint}",
         "EfsId": "${EfsId}",
-        "EnvyImage": "public.ecr.aws/appmesh/aws-appmesh-envoy:v1.18.3.0-prod",
+        "EnvoyImage": "public.ecr.aws/appmesh/aws-appmesh-envoy:v1.18.3.0-prod",
         "DbiResourceId": "${DbiResourceId}",
         "ContainerCpu": "100",
         "ContainerMemory": "256",
