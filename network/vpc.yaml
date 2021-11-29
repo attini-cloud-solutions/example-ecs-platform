@@ -260,7 +260,7 @@ Resources:
   RouteOverNatGatewayAzB:
     Type: AWS::EC2::Route
     Properties:
-      RouteTableId: !Ref RouteTableOverNatGatewayAzA
+      RouteTableId: !Ref RouteTableOverNatGatewayAzB
       DestinationCidrBlock: 0.0.0.0/0
       NatGatewayId:
         !If
