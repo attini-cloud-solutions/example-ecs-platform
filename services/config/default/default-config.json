@@ -1,6 +1,5 @@
 {
     "parameters": {
-        "CapacityProvider": "${CapacityProvider}",
         "CloudMapNamespaceId": "${CloudMapNamespaceId}",
         "CloudMapNamespaceName": "${CloudMapNamespaceName}",
         "MeshName": "${MeshName}",
@@ -9,10 +8,12 @@
         "TaskExecutionRoleArn": "${TaskExecutionRoleArn}",
         "EfsAccessPoint": "${EfsAccessPoint}",
         "EfsId": "${EfsId}",
-        "EnvoyImage": "public.ecr.aws/appmesh/aws-appmesh-envoy:v1.18.3.0-prod",
+        "EnvoyImage": "public.ecr.aws/appmesh/aws-appmesh-envoy:v1.20.0.0-prod",
         "DbiResourceId": "${DbiResourceId}",
-        "ContainerCpu": "100",
-        "ContainerMemory": "256",
-        "DesiredCount": 1
+        "ContainerCpu": "256",
+        "ContainerMemory": "512",
+        "DesiredCount": 1,
+        "PublicApiServiceHttpTargetGroup": "",
+        "PublicSecurityGroup": ""
     }
 }

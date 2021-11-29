@@ -12,8 +12,9 @@
           "fallback" : true,
           "value": "test-webserver"
         },
-        "ContainerCpu": "100",
-        "ContainerMemory": "256",
-        "DesiredCount": "1"
+        "DesiredCount": {
+          "fallback" : true,
+          "value": 1
+        }
     }
 }

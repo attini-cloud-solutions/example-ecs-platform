@@ -42,7 +42,7 @@ Resources:
       SourceSecurityGroupId: !GetAtt DefaultAppSecurityGroup.GroupId
       ToPort: 80
 
-  PublicSecurityGroup:
+  PublicAlbSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Public security group
@@ -66,6 +66,21 @@ Resources:
           IpProtocol: tcp
           CidrIp: 0.0.0.0/0
 
+  PublicGatewaySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public gateway security group
+      GroupName: !Sub ${AttiniEnvironmentName}-public-gateway
+      VpcId:
+        Fn::ImportValue:
+          !Sub ${AttiniEnvironmentName}-vpc:id
+      SecurityGroupIngress:
+        - Description: Opening to Alb
+          FromPort: 80
+          ToPort: 80
+          IpProtocol: tcp
+          SourceSecurityGroupId: !GetAtt PublicAlbSecurityGroup.GroupId
+
 
   EfsSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -88,9 +103,13 @@ Outputs:
     Description: PostgreSqlSecurityGroup
     Value: !GetAtt PostgreSqlSecurityGroup.GroupId
 
-  PublicSecurityGroup:
-    Description: PublicSecurityGroup
-    Value: !GetAtt PublicSecurityGroup.GroupId
+  PublicAlbSecurityGroup:
+    Description: PublicAlbSecurityGroup
+    Value: !GetAtt PublicAlbSecurityGroup.GroupId
+
+  PublicGatewaySecurityGroup:
+    Description: PublicGatewaySecurityGroup
+    Value: !GetAtt PublicGatewaySecurityGroup.GroupId
 
   EfsSecurityGroup:
     Description: EfsSecurityGroup

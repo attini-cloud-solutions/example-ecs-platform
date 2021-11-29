@@ -20,23 +20,6 @@ Parameters:
   ContainerMemory:
     Type: Number
     Description: The allocated memory for the container
-    Default: 256
-    AllowedValues:
-      - 256
-      - 320
-      - 384
-      - 448
-      - 512
-      - 768
-      - 1024
-      - 1280
-      - 1536
-      - 1792
-      - 2048
-      - 2560
-      - 3072
-      - 4096
-      - 6144
 
   DesiredCount:
     Type: String
@@ -45,7 +28,6 @@ Parameters:
   ContainerCpu:
     Type: Number
     Description: The allocated Cpu for the container
-    Default: 100
 
   EnvoyImage:
     Type: String
@@ -74,10 +56,15 @@ Parameters:
     Type: String
     Description: Default filesystem Id
 
-  CapacityProvider:
+  PublicApiServiceHttpTargetGroup:
     Type: String
-    Description: Ecs capacity provider
+    Description: ALB target group for public services
+    Default: ""
 
+  PublicSecurityGroup:
+    Type: String
+    Description: Public security group
+    Default: ""
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -91,7 +78,6 @@ Metadata:
     - Label:
         default: Attini managed configuration
       Parameters:
-        - CapacityProvider
         - EfsId
         - TaskExecutionRoleArn
         - MeshName
@@ -104,6 +90,18 @@ Metadata:
         - AppName
 
 
+Conditions:
+  PublicApiServiceHttpTargetGroup:
+    !Not
+      - !Equals
+        - !Ref PublicApiServiceHttpTargetGroup
+        - ""
+
+  PublicSecurityGroup:
+    !Not
+      - !Equals
+        - !Ref PublicSecurityGroup
+        - ""
 
 
 Resources:
@@ -123,6 +121,10 @@ Resources:
       - Key: StackName
         Value: !Ref AWS::StackName
       NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref ContainerCpu
+      Memory: !Ref ContainerMemory
       Volumes:
         - Name: !Sub ${AppName}_volume
           EFSVolumeConfiguration:
@@ -134,7 +136,7 @@ Resources:
             FilesystemId: !Ref EfsId
             TransitEncryption: ENABLED
       ProxyConfiguration:
-        ContainerName: !Sub ${AttiniEnvironmentName}-${AppName}-envy
+        ContainerName: !Sub ${AttiniEnvironmentName}-${AppName}-envoy
         Type: APPMESH
         ProxyConfigurationProperties:
         - Name: IgnoredUID
@@ -171,8 +173,8 @@ Resources:
             Options:
               awslogs-group: !Ref TaskDefinitionLogGroup
               awslogs-region: !Ref AWS::Region
-          MemoryReservation: !Ref ContainerMemory
-          Cpu: !Ref ContainerCpu
+              awslogs-stream-prefix: !Ref AWS::StackName
+
           PortMappings:
             - ContainerPort: 80
           MountPoints:
@@ -180,7 +182,7 @@ Resources:
               SourceVolume: !Sub ${AppName}_volume
 
         -
-          Name: !Sub ${AttiniEnvironmentName}-${AppName}-envy
+          Name: !Sub ${AttiniEnvironmentName}-${AppName}-envoy
           Image: !Ref EnvoyImage
           Essential: false
           Environment:
@@ -190,8 +192,9 @@ Resources:
           LogConfiguration:
             LogDriver: awslogs
             Options:
-              awslogs-group: !Ref EnvyLogGroup
+              awslogs-group: !Ref EnvoyLogGroup
               awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref AWS::StackName
           MemoryReservation: 20
           Cpu: 10
           User: 101:101
@@ -202,28 +205,23 @@ Resources:
       LogGroupName: !Sub "${AttiniEnvironmentName}/${AppName}"
       RetentionInDays: 30
 
-  EnvyLogGroup:
+  EnvoyLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub "${AttiniEnvironmentName}/${AppName}/envy"
+      LogGroupName: !Sub "${AttiniEnvironmentName}/${AppName}/envoy"
       RetentionInDays: 30
 
   EcsService:
     Type: AWS::ECS::Service
     Properties:
       Cluster: !Ref EcsCluster
+      LaunchType: FARGATE
       ServiceRegistries:
       - ContainerName: !Sub ${AttiniEnvironmentName}-${AppName}
         RegistryArn: !GetAtt ServiceDiscovery.Arn
       TaskDefinition: !Ref TaskDefinition
       EnableECSManagedTags: true
-      PlacementStrategies:
-        - Type: spread
-          Field: attribute:ecs.availability-zone
-        - Type: binpack
-          Field: memory
-      PlacementConstraints:
-        - Type: distinctInstance
+      EnableExecuteCommand: true
       PropagateTags: TASK_DEFINITION
       DeploymentConfiguration:
         DeploymentCircuitBreaker:
@@ -238,16 +236,24 @@ Resources:
         AwsvpcConfiguration:
           SecurityGroups:
             - !Ref SecurityGroup
+            - Fn::If:
+              - PublicSecurityGroup
+              - !Ref PublicSecurityGroup
+              - !Ref AWS::NoValue
           Subnets:
             - Fn::ImportValue:
                 !Sub ${AttiniEnvironmentName}-vpc:private-subnet-az-a
             - Fn::ImportValue:
                 !Sub ${AttiniEnvironmentName}-vpc:private-subnet-az-b
-      CapacityProviderStrategy:
-      - CapacityProvider:
-          !Ref CapacityProvider
-        Base: 1
-        Weight: 1
+      LoadBalancers:
+        !If
+          - PublicApiServiceHttpTargetGroup
+          - - TargetGroupArn:
+                Ref: PublicApiServiceHttpTargetGroup
+              ContainerPort: 80
+              ContainerName: !Sub ${AttiniEnvironmentName}-${AppName}
+          - !Ref AWS::NoValue
+
 
   ServiceDiscovery:
     Type: AWS::ServiceDiscovery::Service
@@ -337,3 +343,30 @@ Resources:
         Provider:
           VirtualRouter:
             VirtualRouterName: !GetAtt VirtualRouter.VirtualRouterName
+
+  VirtualGateway80:
+    Type: AWS::AppMesh::VirtualGateway
+    Condition: PublicApiServiceHttpTargetGroup
+    Properties:
+      MeshName: !Sub ${MeshName}
+      Spec:
+        Listeners:
+          - PortMapping:
+              Port: 80
+              Protocol: http
+      VirtualGatewayName: PublicHttp
+
+  VirtualGateway80Route:
+    Type: AWS::AppMesh::GatewayRoute
+    Condition: PublicApiServiceHttpTargetGroup
+    Properties:
+      MeshName: !Sub ${MeshName}
+      Spec:
+        HttpRoute:
+          Action:
+            Target:
+              VirtualService:
+                VirtualServiceName: !GetAtt VirtualService.VirtualServiceName
+          Match:
+            Prefix: /
+      VirtualGatewayName: !GetAtt VirtualGateway80.VirtualGatewayName

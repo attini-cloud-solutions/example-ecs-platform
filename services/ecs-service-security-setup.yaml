@@ -7,6 +7,9 @@ Parameters:
   AppName:
     Type: String
 
+  MeshName:
+    Type: String
+
   DbiResourceId:
     Type: String
     #aws rds describe-db-instances --query "DBInstances[*].[DBInstanceIdentifier,DbiResourceId]" --region eu-central-1
@@ -14,6 +17,10 @@ Parameters:
   EfsId:
     Type: String
     Description: Default filesystem Id
+
+  AttiniEnvironmentName:
+    Type: String
+    Description: The name of the environment the stack created belongs to
 
 Resources:
 
@@ -55,6 +62,21 @@ Resources:
                 Condition:
                   StringEquals:
                     elasticfilesystem:AccessPointArn: !GetAtt EfsAccessPoint.Arn
+              -
+                Action:
+                - appmesh:StreamAggregatedResources
+                Effect: Allow
+                Resource:
+                  !Sub arn:aws:appmesh:${AWS::Region}:${AWS::AccountId}:mesh/${MeshName}/virtualNode/${AttiniEnvironmentName}-${AppName}-node
+              -
+                Action:
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Effect: Allow
+                Resource: "*"
+
 
   EfsAccessPoint:
     Type: AWS::EFS::AccessPoint

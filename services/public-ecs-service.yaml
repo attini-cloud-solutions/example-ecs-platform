@@ -22,7 +22,7 @@ Parameters:
 
   EnvoyImage:
     Type: String
-    Description: The envy image
+    Description: The Envoy image
     Default: public.ecr.aws/appmesh/aws-appmesh-envoy:v1.16.1.1-prod
 
 
@@ -51,18 +51,10 @@ Parameters:
       - 4096
       - 6144
 
-
   ContainerCpu:
     Type: Number
     Description: The allocated Cpu for the container
     Default: 100
-
-  # NetworkMode:
-  #   Type: String
-  #   Default: awsvpc
-  #   AllowedValues:
-  #     - awsvpc
-  #     - bridge
 
   PrivateSecurityGroup:
     Type: String
@@ -72,9 +64,6 @@ Parameters:
     Type: String
     Description: Tasks public security group
 
-  # HasAdditionalPort:
-  #   !Not [ !Equals [ !Ref AdditionalPort, "0" ] ]
-
   CloudMapNamespaceId:
     Type: String
 
@@ -83,7 +72,6 @@ Parameters:
 
   MeshName:
     Type: String
-    # Default: ecs-cluster-mesh
 
   TaskExecutionRoleArn:
     Type: String
@@ -99,21 +87,11 @@ Parameters:
   CapacityProvider:
     Type: String
     Description: Ecs capacity provider
-    # Default: stage-ecs-cluster-capacity-provider
-
 
   PublicApiServiceHttpTargetGroup:
     Type: String
     Description: Http target group
-# Conditions:
 
-  # UseCloudWatch: !Equals [ !Ref LogTarget, "cloudwatch" ]
-
-  # HasAdditionalPort:
-  #   !Not [ !Equals [ !Ref AdditionalPort, "0" ] ]
-
-  # IsAwsVpcNetwork:
-  #   !Equals [ !Ref NetworkMode, awsvpc ]
 
 Resources:
 
@@ -139,15 +117,9 @@ Resources:
               AccessPointId: !Ref EfsAccessPoint
               IAM: ENABLED
             FilesystemId: !Ref EfsId
-            # RootDirectory: !Sub /mnt/apps-efs/${AppName}
             TransitEncryption: ENABLED
-            # TransitEncryptionPort:
-            # TransitEncryptionPort: Integer
-        # -
-        #   Host:
-        #     SourcePath: !Sub /mnt/apps-efs/${AppName}
       ProxyConfiguration:
-        ContainerName: !Sub ${AttiniEnvironmentName}-${AppName}-envy
+        ContainerName: !Sub ${AttiniEnvironmentName}-${AppName}-Envoy
         Type: APPMESH
         ProxyConfigurationProperties:
         - Name: IgnoredUID
@@ -190,7 +162,7 @@ Resources:
         MountPoints:
           - ContainerPath: !Sub /mnt/default-efs
             SourceVolume: !Sub ${AppName}_volume
-      - Name: !Sub ${AttiniEnvironmentName}-${AppName}-envy
+      - Name: !Sub ${AttiniEnvironmentName}-${AppName}-Envoy
         Image: !Ref EnvoyImage
         Essential: false
         Environment:
@@ -200,7 +172,7 @@ Resources:
         LogConfiguration:
           LogDriver: awslogs
           Options:
-            awslogs-group: !Ref EnvyLogGroup
+            awslogs-group: !Ref EnvoyLogGroup
             awslogs-region: !Ref AWS::Region
         MemoryReservation: 20
         Cpu: 10
@@ -212,10 +184,10 @@ Resources:
       LogGroupName: !Sub "${AttiniEnvironmentName}/${AppName}"
       RetentionInDays: 30
 
-  EnvyLogGroup:
+  EnvoyLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub "${AttiniEnvironmentName}/${AppName}/envy"
+      LogGroupName: !Sub "${AttiniEnvironmentName}/${AppName}/Envoy"
       RetentionInDays: 30
 
   EcsService:

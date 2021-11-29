@@ -1,9 +1,9 @@
 
 {
     "extends": "/services/config/default/default-config.json",
-    "stackName": "${Environment}-customer-${StackNameSuffix}",
+    "stackName": "${Environment}-public-gateway-${StackNameSuffix}",
     "parameters": {
-        "AppName": "customer-service",
+        "AppName": "public-gateway-service",
         "ContainerRepository": {
           "fallback" : true,
           "value": "public.ecr.aws/y8m4v8b7/attini-labs"
@@ -12,9 +12,11 @@
           "fallback" : true,
           "value": "test-webserver"
         },
+        "PublicApiServiceHttpTargetGroup": "${PublicApiServiceHttpTargetGroup}",
+        "PublicSecurityGroup": "${PublicSecurityGroup}",
         "DesiredCount": {
           "fallback" : true,
           "value": 1
         }
     }
-  }
+}

@@ -1,0 +1,66 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  Public network load balancer (NLB)
+################################################################################
+Parameters:
+################################################################################
+
+  AttiniEnvironmentName:
+    Type: String
+    Description: The name of the environment the stack created belongs to
+    Default: stage
+
+  SecurityGroup:
+    Type: String
+
+Resources:
+  PublicAlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Ref AWS::StackName
+      Scheme: internet-facing
+      Type: application
+      SecurityGroups:
+        - !Ref SecurityGroup
+      SubnetMappings:
+      - SubnetId:
+          !ImportValue
+            Fn::Sub: ${AttiniEnvironmentName}-vpc:public-subnet-az-a
+      - SubnetId:
+          !ImportValue
+            Fn::Sub: ${AttiniEnvironmentName}-vpc:public-subnet-az-b
+
+
+  PublicApiServiceHttpTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckPath: /index.html
+      HealthCheckProtocol: HTTP
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 10
+      Matcher:
+        HttpCode: 200-399
+      Port: 80
+      Protocol: HTTP
+      TargetType: ip
+      VpcId:
+        Fn::ImportValue:
+          !Sub ${AttiniEnvironmentName}-vpc:id
+
+
+  PublicApiServiceListener80:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref PublicApiServiceHttpTargetGroup
+          Type: 'forward'
+      LoadBalancerArn: !Ref PublicAlb
+      Port: 80
+      Protocol: HTTP
+
+Outputs:
+  PublicAlbDNSName:
+    Value: !GetAtt  PublicAlb.DNSName
+
+  PublicApiServiceHttpTargetGroup:
+    Value: !Ref PublicApiServiceHttpTargetGroup
